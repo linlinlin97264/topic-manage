@@ -189,19 +189,23 @@ export class RegisterComponent implements OnInit {
   get confirmPassword() { return this.registerForm.get('confirmPassword')!; }
 
   async handleSubmit() {
-    console.log('Submit button clicked');
-    console.log('Form value:', this.registerForm.value);
-    console.log('Form valid:', this.registerForm.valid);
-
     if (this.registerForm.valid) {
       try {
         const { confirmPassword, ...registerData } = this.registerForm.value;
         await this.authService.register(registerData);
         
         const toast = await this.toastController.create({
-          message: 'Registration successful!',
-          duration: 2000,
-          color: 'success'
+          message: 'Registration successful! Please check your email to verify your account.',
+          duration: 5000,
+          color: 'success',
+          buttons: [
+            {
+              text: 'Resend',
+              handler: () => {
+                this.resendVerification();
+              }
+            }
+          ]
         });
         await toast.present();
         await this.router.navigate(['/login']);
@@ -214,13 +218,24 @@ export class RegisterComponent implements OnInit {
         });
         await toast.present();
       }
-    } else {
-      console.log('Form is invalid');
-      console.log('Form errors:', this.registerForm.errors);
+    }
+  }
+
+  async resendVerification() {
+    try {
+      await this.authService.resendVerificationEmail();
       const toast = await this.toastController.create({
-        message: 'Please check all fields are valid',
+        message: 'Verification email sent again',
         duration: 3000,
-        color: 'warning'
+        color: 'success'
+      });
+      await toast.present();
+    } catch (error) {
+      console.error('Error sending verification email:', error);
+      const toast = await this.toastController.create({
+        message: 'Failed to send verification email',
+        duration: 3000,
+        color: 'danger'
       });
       await toast.present();
     }

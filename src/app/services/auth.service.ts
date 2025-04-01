@@ -1,6 +1,6 @@
 import { Injectable, inject } from '@angular/core';
 import { Auth } from '@angular/fire/auth';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User, RecaptchaVerifier } from '@angular/fire/auth';
+import { createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut, GoogleAuthProvider, signInWithPopup, onAuthStateChanged, User, RecaptchaVerifier, sendEmailVerification } from '@angular/fire/auth';
 import { UserService } from './user.service';
 import { Firestore, doc, getDoc, setDoc } from '@angular/fire/firestore';
 import { RegisterData } from '../models/auth.model';
@@ -62,25 +62,30 @@ export class AuthService {
     try {
       console.log('Starting registration process');
       
-      // 先验证 reCAPTCHA
       await this.recaptchaVerifier.verify();
       console.log('reCAPTCHA verified');
       
-      // 然后继续注册流程
       const credential = await createUserWithEmailAndPassword(
         this.auth, 
         data.email, 
         data.password
       );
       console.log('User created in Firebase Auth');
+
+      // 发送验证邮件
+      if (credential.user) {
+        await sendEmailVerification(credential.user);
+        console.log('Verification email sent');
+      }
       
-      // 创建用户档案，包含用户名
+      // 创建用户档案
       const userRef = doc(this.firestore, `users/${credential.user.uid}`);
       await setDoc(userRef, {
         uid: credential.user.uid,
         email: credential.user.email,
         username: data.username,
-        createdAt: new Date()
+        createdAt: new Date(),
+        emailVerified: false
       });
       console.log('User profile created in Firestore');
 
@@ -89,15 +94,30 @@ export class AuthService {
       console.error('Registration error:', error);
       throw error;
     } finally {
-      // 清除旧的验证器，下次会重新创建
       this.recaptchaVerifier = null;
     }
   }
 
-  // 邮箱密码登录
+  // 添加检查邮箱验证状态的方法
+  isEmailVerified(): boolean {
+    return this.auth.currentUser?.emailVerified ?? false;
+  }
+
+  // 重新发送验证邮件
+  async resendVerificationEmail() {
+    const user = this.auth.currentUser;
+    if (user && !user.emailVerified) {
+      await sendEmailVerification(user);
+    }
+  }
+
+  // 修改登录方法，添加邮箱验证检查
   async login(email: string, password: string) {
     try {
       const result = await signInWithEmailAndPassword(this.auth, email, password);
+      if (!result.user.emailVerified) {
+        throw new Error('Please verify your email address first');
+      }
       return result;
     } catch (error) {
       console.error('Login error:', error);
