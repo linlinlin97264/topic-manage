@@ -27,7 +27,13 @@ export const routes: Routes = [
   },
   {
     path: 'register',
-    loadComponent: () => import('./auth/register/register.component').then(m => m.RegisterComponent)
+    loadComponent: () => import('./auth/register/register.component')
+      .then(m => m.RegisterComponent)
+  },
+  {
+    path: 'topics',
+    component: HomePage,
+    ...canActivate(redirectUnauthorizedToLogin)
   },
   {
     path: 'topics/new',

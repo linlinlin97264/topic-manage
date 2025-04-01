@@ -1,7 +1,7 @@
-import { Component } from '@angular/core';
+import { Component, OnInit } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { FormGroup, FormControl, Validators, ReactiveFormsModule, AbstractControl, ValidationErrors } from '@angular/forms';
-import { Router } from '@angular/router';
+import { FormGroup, FormBuilder, Validators, ReactiveFormsModule, AbstractControl, ValidationErrors } from '@angular/forms';
+import { Router, RouterLink } from '@angular/router';
 import { 
   IonContent, 
   IonItem, 
@@ -13,6 +13,7 @@ import {
   IonTitle,
   IonButtons,
   IonBackButton,
+  ToastController,
   IonText
 } from '@ionic/angular/standalone';
 import { AuthService } from '../../services/auth.service';
@@ -54,6 +55,23 @@ function passwordMatchValidator(control: AbstractControl): ValidationErrors | nu
 
 @Component({
   selector: 'app-register',
+  standalone: true,
+  imports: [
+    CommonModule,
+    ReactiveFormsModule,
+    RouterLink,
+    IonHeader,
+    IonToolbar,
+    IonTitle,
+    IonContent,
+    IonItem,
+    IonLabel,
+    IonInput,
+    IonButton,
+    IonButtons,
+    IonBackButton,
+    IonText
+  ],
   template: `
     <ion-header>
       <ion-toolbar>
@@ -65,23 +83,22 @@ function passwordMatchValidator(control: AbstractControl): ValidationErrors | nu
     </ion-header>
 
     <ion-content class="ion-padding">
-      <form [formGroup]="registerForm" (ngSubmit)="onSubmit()">
+      <div [formGroup]="registerForm">
         <ion-item>
           <ion-label position="floating">Username</ion-label>
-          <ion-input formControlName="username" type="text"></ion-input>
+          <ion-input type="text" formControlName="username"></ion-input>
         </ion-item>
         
         <ion-item>
           <ion-label position="floating">Email</ion-label>
-          <ion-input formControlName="email" type="email"></ion-input>
+          <ion-input type="email" formControlName="email"></ion-input>
         </ion-item>
 
         <ion-item>
           <ion-label position="floating">Password</ion-label>
-          <ion-input formControlName="password" type="password"></ion-input>
+          <ion-input type="password" formControlName="password"></ion-input>
         </ion-item>
         
-        <!-- 修改密码规则提醒的显示逻辑 -->
         <div class="ion-padding-start ion-margin-bottom" *ngIf="password.dirty">
           <ion-text [color]="password.errors?.['minLength'] ? 'danger' : 'success'">
             <small>• At least 8 characters long</small>
@@ -102,71 +119,110 @@ function passwordMatchValidator(control: AbstractControl): ValidationErrors | nu
 
         <ion-item>
           <ion-label position="floating">Confirm Password</ion-label>
-          <ion-input formControlName="confirmPassword" type="password"></ion-input>
+          <ion-input type="password" formControlName="confirmPassword"></ion-input>
         </ion-item>
         
-        <!-- 修改密码不匹配提醒的显示逻辑 -->
         <div class="ion-padding-start" *ngIf="confirmPassword.dirty && registerForm.errors?.['passwordMismatch']">
           <ion-text color="danger">
             <small>Passwords do not match</small>
           </ion-text>
         </div>
 
-        <div class="ion-padding">
-          <ion-button expand="block" type="submit" [disabled]="!registerForm.valid">
-            Create account
-          </ion-button>
-          
-          <ion-button expand="block" fill="clear" routerLink="/login">
-            Already have an account?
+        <div class="ion-padding-top">
+          <ion-button 
+            expand="block" 
+            (click)="handleSubmit()"
+            [disabled]="!registerForm.valid"
+            id="register-button">
+            Register
           </ion-button>
         </div>
-      </form>
+      </div>
+
+      <div class="ion-padding-top ion-text-center">
+        <ion-button fill="clear" routerLink="/login">
+          Already have an account? Login
+        </ion-button>
+      </div>
     </ion-content>
   `,
-  standalone: true,
-  imports: [
-    CommonModule,
-    ReactiveFormsModule,
-    IonContent,
-    IonItem,
-    IonLabel,
-    IonInput,
-    IonButton,
-    IonHeader,
-    IonToolbar,
-    IonTitle,
-    IonButtons,
-    IonBackButton,
-    IonText
-  ]
+  styles: [`
+    ion-item {
+      --padding-start: 0;
+      --inner-padding-end: 0;
+      margin-bottom: 16px;
+    }
+    
+    ion-button[type="submit"] {
+      margin-top: 24px;
+    }
+  `]
 })
-export class RegisterComponent {
-  registerForm = new FormGroup({
-    username: new FormControl('', Validators.required),
-    email: new FormControl('', [Validators.required, Validators.email]),
-    password: new FormControl('', [Validators.required, passwordValidator]),
-    confirmPassword: new FormControl('', Validators.required)
-  }, { validators: passwordMatchValidator });
+export class RegisterComponent implements OnInit {
+  registerForm: FormGroup;
 
   constructor(
+    private fb: FormBuilder,
     private authService: AuthService,
-    private router: Router
-  ) {}
+    private router: Router,
+    private toastController: ToastController
+  ) {
+    console.log('Register component constructor');
+    this.registerForm = this.fb.group({
+      username: ['', [Validators.required, Validators.minLength(3)]],
+      email: ['', [Validators.required, Validators.email]],
+      password: ['', [Validators.required, passwordValidator]],
+      confirmPassword: ['', Validators.required]
+    }, { validators: passwordMatchValidator });
+  }
 
-  // Getter methods for easy access in template
+  ngOnInit() {
+    console.log('Register component initialized');
+    try {
+      this.authService.initRecaptcha('register-button');
+    } catch (error) {
+      console.error('Error initializing reCAPTCHA:', error);
+    }
+  }
+
   get password() { return this.registerForm.get('password')!; }
   get confirmPassword() { return this.registerForm.get('confirmPassword')!; }
 
-  async onSubmit() {
+  async handleSubmit() {
+    console.log('Submit button clicked');
+    console.log('Form value:', this.registerForm.value);
+    console.log('Form valid:', this.registerForm.valid);
+
     if (this.registerForm.valid) {
       try {
         const { confirmPassword, ...registerData } = this.registerForm.value;
-        await this.authService.register(registerData as RegisterData);
-        await this.router.navigate(['/topics']);
+        await this.authService.register(registerData);
+        
+        const toast = await this.toastController.create({
+          message: 'Registration successful!',
+          duration: 2000,
+          color: 'success'
+        });
+        await toast.present();
+        await this.router.navigate(['/login']);
       } catch (error) {
         console.error('Registration error:', error);
+        const toast = await this.toastController.create({
+          message: error instanceof Error ? error.message : 'Registration failed',
+          duration: 3000,
+          color: 'danger'
+        });
+        await toast.present();
       }
+    } else {
+      console.log('Form is invalid');
+      console.log('Form errors:', this.registerForm.errors);
+      const toast = await this.toastController.create({
+        message: 'Please check all fields are valid',
+        duration: 3000,
+        color: 'warning'
+      });
+      await toast.present();
     }
   }
 } 
