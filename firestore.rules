@@ -15,31 +15,27 @@ service cloud.firestore {
       allow list: if request.auth != null;
 
       // 允许有权限的用户读取具体的 topic
-      allow get: if request.auth != null;
+      allow get: if request.auth != null && (
+        resource.data.owner == request.auth.uid ||
+        request.auth.uid in resource.data.editors ||
+        request.auth.uid in resource.data.readers
+      );
 
       // 创建 topic
       allow create: if request.auth != null;
 
       // 更新规则 - 只检查基本权限
-      allow update: if request.auth != null && 
-        (
-          resource.data.owner == request.auth.uid ||
-          request.auth.uid in resource.data.editors
-        );
+      allow update: if request.auth != null && (
+        resource.data.owner == request.auth.uid ||
+        request.auth.uid in resource.data.editors
+      );
 
       // 删除规则
-      allow delete: if request.auth != null && 
-        resource.data.owner == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.owner == request.auth.uid;
 
       // 帖子的规则
       match /posts/{postId} {
-        allow read: if request.auth != null && (
-          get(/databases/$(database)/documents/topics/$(topicId)).data.owner == request.auth.uid ||
-          request.auth.uid in get(/databases/$(database)/documents/topics/$(topicId)).data.editors ||
-          request.auth.uid in get(/databases/$(database)/documents/topics/$(topicId)).data.readers
-        );
-
-        // 只允许 owner 和 editors 写入帖子
+        allow read: if request.auth != null;
         allow write: if request.auth != null && (
           get(/databases/$(database)/documents/topics/$(topicId)).data.owner == request.auth.uid ||
           request.auth.uid in get(/databases/$(database)/documents/topics/$(topicId)).data.editors

@@ -1,5 +1,5 @@
 import { Injectable, inject } from '@angular/core';
-import { Firestore, collection, collectionData, doc, updateDoc, addDoc, deleteDoc, getDoc, docData, Timestamp, arrayUnion, arrayRemove, setDoc, runTransaction } from '@angular/fire/firestore';
+import { Firestore, collection, collectionData, doc, updateDoc, addDoc, deleteDoc, getDoc, docData, Timestamp, arrayUnion, arrayRemove, setDoc, runTransaction, getDocs, writeBatch } from '@angular/fire/firestore';
 import { Observable, map, tap, from, switchMap } from 'rxjs';
 import { Auth } from '@angular/fire/auth';
 import { UserService } from './user.service';
@@ -65,6 +65,8 @@ export class TopicService {
           editors: topic['editors'] as string[] || [],
           createdAt: topic['createdAt'] ? (topic['createdAt'] as Timestamp).toDate() : undefined,
           updatedAt: topic['updatedAt'] ? (topic['updatedAt'] as Timestamp).toDate() : undefined,
+          lastUpdatedBy: topic['lastUpdatedBy'] as string,
+          lastUpdatedByName: topic['lastUpdatedByName'] as string,
           ownerName: ownerData?.['username'] || ownerData?.['email'] || 'Unknown user',
           version: topic['version'] || 0
         } as Topic;
@@ -133,27 +135,31 @@ export class TopicService {
     const topicRef = doc(this.firestore, `topics/${topicId}`);
     
     try {
-      // 先获取当前文档
-      const topicDoc = await getDoc(topicRef);
-      if (!topicDoc.exists()) {
-        throw new Error('Topic not found');
-      }
+      // 使用事务来确保原子性操作
+      await runTransaction(this.firestore, async (transaction) => {
+        const topicDoc = await transaction.get(topicRef);
+        if (!topicDoc.exists()) {
+          throw new Error('Topic not found');
+        }
 
-      const currentData = topicDoc.data();
-      const currentVersion = currentData['version'] ?? 0;
-      const currentUser = this.auth.currentUser;
-      
-      if (!currentUser) {
-        throw new Error('User not authenticated');
-      }
+        const currentData = topicDoc.data();
+        const currentVersion = currentData['version'] ?? 0;
+        const currentUser = this.auth.currentUser;
+        
+        if (!currentUser) {
+          throw new Error('User not authenticated');
+        }
 
-      // 获取当前用户的信息
-      const userDoc = await getDoc(doc(this.firestore, `users/${currentUser.uid}`));
-      const userData = userDoc.data();
-      const userName = userData?.['username'] || userData?.['email'] || 'Unknown user';
-      
-      // 检查版本号
-      if (currentVersion === expectedVersion) {
+        // 获取当前用户的信息
+        const userDoc = await getDoc(doc(this.firestore, `users/${currentUser.uid}`));
+        const userData = userDoc.data();
+        const userName = userData?.['username'] || userData?.['email'] || 'Unknown user';
+        
+        // 检查版本号
+        if (currentVersion !== expectedVersion) {
+          throw new Error('Topic has been modified by another user. Please refresh and try again.');
+        }
+
         // 构建更新数据
         const newData = {
           ...currentData,  // 保留所有现有字段
@@ -163,24 +169,17 @@ export class TopicService {
           editors: currentData['editors'] || [],
           readers: currentData['readers'] || [],
           version: currentVersion + 1,
-          updatedAt: Timestamp.fromDate(new Date()),
+          updatedAt: new Date(),
           lastUpdatedBy: currentUser.uid,
           lastUpdatedByName: userName
         };
 
-        console.log('Updating document with:', newData);
+        // 在事务中执行更新
+        transaction.update(topicRef, newData);
+      });
 
-        try {
-          await updateDoc(topicRef, newData);
-          console.log('Update successful');
-          return true;
-        } catch (error) {
-          console.error('Firestore update error:', error);
-          throw error;
-        }
-      } else {
-        throw new Error('Topic has been modified by another user. Please refresh and try again.');
-      }
+      console.log('Update successful');
+      return true;
     } catch (error) {
       console.error('Edit topic error:', error);
       throw error;
@@ -188,8 +187,47 @@ export class TopicService {
   }
 
   async removeTopic(topicId: string) {
-    const topicRef = doc(this.firestore, `topics/${topicId}`);
-    return deleteDoc(topicRef);
+    try {
+      const user = this.auth.currentUser;
+      if (!user) {
+        throw new Error('User not authenticated');
+      }
+
+      // 先检查用户权限
+      const topicRef = doc(this.firestore, `topics/${topicId}`);
+      const topicDoc = await getDoc(topicRef);
+      
+      if (!topicDoc.exists()) {
+        throw new Error('Topic not found');
+      }
+
+      const topicData = topicDoc.data();
+      if (topicData['owner'] !== user.uid) {
+        throw new Error('Permission denied: Only owner can delete topics');
+      }
+
+      // 删除主题下的所有帖子
+      const postsRef = collection(this.firestore, `topics/${topicId}/posts`);
+      const postsSnapshot = await getDocs(postsRef);
+      
+      const batch = writeBatch(this.firestore);
+      
+      // 添加所有帖子的删除操作到批处理中
+      postsSnapshot.docs.forEach(doc => {
+        batch.delete(doc.ref);
+      });
+      
+      // 添加主题的删除操作到批处理中
+      batch.delete(topicRef);
+      
+      // 执行批处理
+      await batch.commit();
+      
+      console.log('Topic and all its posts deleted successfully');
+    } catch (error) {
+      console.error('Error deleting topic:', error);
+      throw error;
+    }
   }
 
   getPosts(topicId: string): Observable<Post[]> {
